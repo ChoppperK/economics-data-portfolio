@@ -6,7 +6,7 @@
 
 ## The brief
 
-Build a complete marketing plan for a new product: **Sii Khaw**, a natural body scrub made from tea leaves, honey and natural oils, in recyclable packaging, sourced in Chiang Rai.
+Build a complete marketing plan for a new product. Our team created **Sii Khaw**, a *concept product* (not a real brand): a natural body scrub made from tea leaves, honey and natural oils, using tea from Chiang Rai, in recyclable packaging.
 
 ## My contribution: market situation analysis
 
