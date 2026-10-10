@@ -1,0 +1,78 @@
+#### Stock Regression Result
+                            OLS Regression Results                            
+==============================================================================
+Dep. Variable:                   fdis   R-squared:                       0.975
+Model:                            OLS   Adj. R-squared:                  0.972
+Method:                 Least Squares   F-statistic:                     418.4
+Date:                Wed, 30 Apr 2025   Prob (F-statistic):           4.53e-82
+Time:                        10:30:14   Log-Likelihood:                -2317.7
+No. Observations:                 120   AIC:                             4657.
+Df Residuals:                     109   BIC:                             4688.
+Df Model:                          10                                         
+Covariance Type:            nonrobust                                         
+==============================================================================
+                 coef    std err          t      P>|t|      [0.025      0.975]
+------------------------------------------------------------------------------
+Intercept   4.937e+07   5.68e+07      0.868      0.387   -6.33e+07    1.62e+08
+mv          1.941e+06   2.36e+06      0.822      0.413   -2.74e+06    6.62e+06
+ag            6.8e+06   2.43e+07      0.280      0.780   -4.13e+07    5.49e+07
+pcg        -1325.5035    694.709     -1.908      0.059   -2702.394      51.387
+imp            0.0005   6.67e-05      6.861      0.000       0.000       0.001
+ind        -1.808e+06   1.12e+06     -1.615      0.109   -4.03e+06    4.11e+05
+infl       -8.834e+06    3.7e+06     -2.390      0.019   -1.62e+07   -1.51e+06
+la          1.591e+05   1.05e+06      0.152      0.880   -1.92e+06    2.24e+06
+ne          -191.6248     42.124     -4.549      0.000    -275.113    -108.137
+re             0.0252      0.004      5.880      0.000       0.017       0.034
+un         -4.494e+06   2.16e+06     -2.082      0.040   -8.77e+06   -2.15e+05
+==============================================================================
+Omnibus:                       15.763   Durbin-Watson:                   1.610
+Prob(Omnibus):                  0.000   Jarque-Bera (JB):               33.015
+Skew:                           0.498   Prob(JB):                     6.77e-08
+Kurtosis:                       5.369   Cond. No.                     6.72e+12
+==============================================================================
+Notes:
+[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
+[2] The condition number is large, 6.72e+12. This might indicate that there are
+strong multicollinearity or other numerical problems.
+fdis ~ mv + ag + pcg + imp + ind + infl + la + ne + re + un
+keyboard_arrow_down
+
+#### Flow Regression Result
+                            OLS Regression Results                            
+==============================================================================
+Dep. Variable:                   fdif   R-squared:                       0.141
+Model:                            OLS   Adj. R-squared:                  0.062
+Method:                 Least Squares   F-statistic:                     1.789
+Date:                Wed, 30 Apr 2025   Prob (F-statistic):             0.0710
+Time:                        10:17:09   Log-Likelihood:                -2086.7
+No. Observations:                 120   AIC:                             4195.
+Df Residuals:                     109   BIC:                             4226.
+Df Model:                          10                                         
+Covariance Type:            nonrobust                                         
+==============================================================================
+                 coef    std err          t      P>|t|      [0.025      0.975]
+------------------------------------------------------------------------------
+Intercept   8.967e+06    8.3e+06      1.080      0.282   -7.48e+06    2.54e+07
+mv          6863.0210   3.45e+05      0.020      0.984   -6.77e+05    6.91e+05
+ag         -2.241e+06   3.54e+06     -0.633      0.528   -9.26e+06    4.78e+06
+pcg         -294.0464    101.413     -2.899      0.005    -495.044     -93.049
+imp        -8.502e-06   9.76e-06     -0.871      0.386   -2.79e-05    1.09e-05
+ind         2.612e+05   1.63e+05      1.598      0.113   -6.27e+04    5.85e+05
+infl        4.857e+05    5.4e+05      0.900      0.370   -5.84e+05    1.56e+06
+la          2.759e+05   1.53e+05      1.801      0.075   -2.78e+04     5.8e+05
+ne             1.9121      6.159      0.310      0.757     -10.295      14.119
+re             0.0006      0.001      0.902      0.369      -0.001       0.002
+un         -2.111e+05   3.15e+05     -0.670      0.504   -8.36e+05    4.13e+05
+==============================================================================
+Omnibus:                       18.836   Durbin-Watson:                   2.078
+Prob(Omnibus):                  0.000   Jarque-Bera (JB):               28.694
+Skew:                           0.759   Prob(JB):                     5.88e-07
+Kurtosis:                       4.854   Cond. No.                     6.73e+12
+==============================================================================
+Notes:
+[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
+[2] The condition number is large, 6.73e+12. This might indicate that there are
+strong multicollinearity or other numerical problems.
+fdif ~ mv + ag + pcg + imp + ind + infl + la + ne + re + un
+keyboard_arrow_down
+
