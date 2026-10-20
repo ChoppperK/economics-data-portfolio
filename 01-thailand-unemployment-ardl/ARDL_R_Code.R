@@ -1,33 +1,19 @@
 ##############################################################################
-#  ARDL Bounds-Testing Analysis of Unemployment in Thailand (1994-2024)
-#  Main growth variable: REAL GDP growth | all-positive (shift-adjusted) dataset
+#  Determinants of Unemployment in Thailand: ARDL Bounds Testing, 1994-2024
+#  Final model: ARDL(2,1,0,2,0) | Case III (unrestricted intercept, no trend)
+#  UNEMP ~ GDPGROWTH (real GDP growth) + HDI + CPI (inflation) + FDI (% of GDP)
 #
-#  Model:  UNEMP ~ GDPGROWTH + HDI + CPI + FDI
-#          ARDL(1,1,1,2,2) | Case III (unrestricted intercept, no trend)
-#
-#  Reproduces the tables and figures in
-#  "ARDL_Results_Academic_Report_RealGDP.docx":
-#     Table A  Shift adjustment (removing negative values)
-#     Table 0  Okun's Law benchmark regression
-#     Table 1  Correlation matrix              (+ Fig. 5 heatmap)
-#     Table 2  Unit root tests (ADF, PP, KPSS)
-#     Table 3  VAR lag order selection
-#     Table 4  ARDL bounds test
-#     Table 5  Johansen cointegration test
-#     Table 6  Long-run and short-run estimates (HAC / Newey-West SEs)
-#     Table 7  VECM Granger causality + ECT loadings
-#     Figs 2-3 CUSUM and CUSUM of squares
-#     Fig. 4   Long-run effects chart
+#  Reproduces the tables and figures of the research report.
+#  Data file: Thailand_Unemployment_Data_Final.xlsx (CPI and FDI from the
+#  World Bank WDI, series FP.CPI.TOTL.ZG and BX.KLT.DINV.WD.GD.ZS).
 #
 #  HOW TO RUN
 #    1. Open this file in RStudio.
-#    2. Set the working directory to this folder (Session > Set Working Directory).
-#    3. Run everything: Ctrl+Shift+Enter (or Code > Run Region > Run All).
-#    Each step prints a table you can compare with the report.
+#    2. In STEP 1, set file_path to where the data file is.
+#    3. Run everything: Ctrl+Shift+Enter. Each step prints one table of the report.
 #
-#  The statistical tests are written in plain R (no extra packages), so the
-#  numbers match the report exactly. Only three packages are used: readxl
-#  (read Excel), ARDL (cross-check) and strucchange (CUSUM plot).
+#  The tests are written in plain R, so the numbers match the report. Packages:
+#  readxl (read Excel), ARDL (cross-check) and strucchange (CUSUM plot).
 ##############################################################################
 
 
@@ -120,6 +106,29 @@ kpss_test <- function(x) {
   c(stat = stat, p = p, lags = L)
 }
 
+# Zivot-Andrews (1992) unit-root test with one endogenous break in the intercept
+# (Model A). Same algorithm as Python statsmodels zivot_andrews (Baum 2004):
+# lag length chosen once by AIC on the ADF(constant + trend) regression, max 2
+# lags; break dates searched over the middle 70% of the sample (trim = 15%).
+# Critical values (Zivot & Andrews 1992): 1% -5.34, 5% -4.80, 10% -4.58;
+# statsmodels uses -5.28 / -4.81 / -4.57 for this model.
+za_test <- function(x, years, maxlag = 2, trim = 0.15) {
+  x <- as.numeric(x); n <- length(x); dx <- diff(x)
+  aic <- sapply(0:maxlag, function(L) {
+    i <- (maxlag + 1):(n - 1); X <- cbind(1, i, x[i])
+    if (L > 0) for (j in 1:L) X <- cbind(X, dx[i - j])
+    m <- lm(dx[i] ~ X - 1); -2 * as.numeric(logLik(m)) + 2 * ncol(X) })
+  L <- which.min(aic) - 1
+  rows <- (L + 1):(n - 1); trimcnt <- floor(n * trim)
+  bps <- (trimcnt + 1):(n - trimcnt)
+  stats <- sapply(bps, function(bp) {
+    DU <- as.numeric(seq_along(rows) > bp - (L + 1))
+    X <- cbind(1, DU, seq_along(rows), x[rows])
+    if (L > 0) for (j in 1:L) X <- cbind(X, dx[rows - j])
+    summary(lm(dx[rows] ~ X - 1))$coefficients[4, 3] })
+  c(stat = min(stats), break_year = years[bps[which.min(stats)]], lags = L)
+}
+
 # VAR lag-order table; all lags fitted on the same (common) sample
 var_lag_table <- function(Y, maxlag = 4) {
   Y <- as.matrix(Y); K <- ncol(Y); Tt <- nrow(Y) - maxlag; out <- data.frame(); prev <- NA
@@ -200,268 +209,255 @@ vecm_ect <- function(Y, beta) {
 
 ## ---- STEP 1: Import data ---------------------------------------------------
 # Use forward slashes in the path.
-file_path <- "data/thailand_unemployment_1994_2024.csv"   # <- path to the dataset in this folder
+file_path <- "data/Thailand_Unemployment_Data_Final.xlsx"   # <- or the full path, e.g. "C:/Users/ASUS/.../Thailand_Unemployment_Data_Final.xlsx"
+if (!file.exists(file_path) && interactive()) file_path <- file.choose()   # a window opens: pick the data file
 
-raw <- read.csv(file_path)
-# Columns by position: 1 year, 2 UNEMP, 3 GDP per capita growth, 4 HDI, 5 CPI, 6 FDI,
-# 7 real GDP growth. MAIN MODEL: GDPGROWTH = real GDP growth (column 7).
-# GDP per capita growth (GDPPC, column 3) is used only in the STEP 14 robustness check.
-if (ncol(raw) < 7) stop("Column 7 (real GDP growth) is missing from the Excel file.")
-raw <- raw[, 1:7]
-names(raw) <- c("year", "UNEMP", "GDPPC", "HDI", "CPI", "FDI", "GDPGROWTH")
-df_original <- na.omit(data.frame(lapply(raw, as.numeric)))
+raw <- read_excel(file_path)
+# Columns are found BY HEADER NAME, so their order in the Excel file does not matter.
+hdr <- tolower(gsub("\\s+", " ", trimws(names(raw))))
+find_col <- function(pattern, exclude = NULL, required = TRUE, label = pattern) {
+  hit <- grepl(pattern, hdr, ignore.case = TRUE)
+  if (!is.null(exclude)) hit <- hit & !grepl(exclude, hdr, ignore.case = TRUE)
+  if (sum(hit) == 0) {
+    if (required) stop("Cannot find the '", label, "' column. Headers found: ", paste(names(raw), collapse = " | "))
+    return(NA)
+  }
+  which(hit)[1]
+}
+cols <- c(year      = find_col("^year",                     label = "year"),
+          UNEMP     = find_col("unemploy",                  label = "Unemployment rate"),
+          GDPGROWTH = find_col("gdp.*growth", exclude = "per capita", label = "Real GDP growth"),
+          HDI       = find_col("hdi|human development",     label = "HDI"),
+          CPI       = find_col("cpi|consumer price|inflation", label = "Inflation (CPI)"),
+          FDI       = find_col("foreign direct|fdi",        label = "FDI"),
+          GDPPC     = find_col("per capita", required = FALSE))
+has_gdppc <- !is.na(cols[["GDPPC"]])
+cols <- cols[!is.na(cols)]
+cat("Columns used:\n"); print(setNames(names(raw)[cols], names(cols)))
+df_original <- data.frame(lapply(raw[, cols], function(x) suppressWarnings(as.numeric(x))))
+names(df_original) <- names(cols)
+df_original <- na.omit(df_original[!is.na(df_original$year), ])
 df_original <- df_original[order(df_original$year), ]
 cat("Sample:", min(df_original$year), "-", max(df_original$year), "| n =", nrow(df_original), "\n")
 
 
-## ---- STEP 1b: Table A - Make all values positive ---------------------------
-# GDPGROWTH, CPI and FDI have negative years. Each is shifted by
-#   constant = |minimum| + 0.1   -> every value becomes >= 0.1.
-# UNEMP and HDI are already positive and stay unchanged.
-# Set use_positive_data <- FALSE to run everything on the original data:
-# all slopes, SEs and test statistics stay identical; only constants change.
+## ---- STEP 2: Shift adjustment (Chapter 3.3) --------------------------------
+# GDPGROWTH, CPI and FDI have negative years; each is shifted by |min| + 0.1.
+# Only the constants change; every slope, SE and test statistic is identical.
 use_positive_data <- TRUE
-
 vars5 <- c("UNEMP", "GDPGROWTH", "HDI", "CPI", "FDI")
 df <- df_original
-tableA <- data.frame()
-for (v in c("GDPGROWTH", "CPI", "FDI", "UNEMP", "HDI", "GDPPC")) {
-  mn <- min(df_original[[v]])
-  sc <- if (use_positive_data && mn < 0) -mn + 0.1 else 0
+shiftA <- data.frame()
+for (v in c("GDPGROWTH", "CPI", "FDI", "UNEMP", "HDI", if (has_gdppc) "GDPPC")) {
+  mn <- min(df_original[[v]]); sc <- if (use_positive_data && mn < 0) -mn + 0.1 else 0
   df[[v]] <- df_original[[v]] + sc
-  tableA <- rbind(tableA, data.frame(Variable = v, Orig_min = round(mn, 4),
-    Orig_max = round(max(df_original[[v]]), 4), Constant_added = round(sc, 4),
-    Adj_min = round(min(df[[v]]), 4), Adj_max = round(max(df[[v]]), 4)))
+  shiftA <- rbind(shiftA, data.frame(Variable = v, Min = round(mn, 4), Constant_added = round(sc, 4)))
 }
-cat("\n===== Table A: Shift adjustment =====\n"); print(tableA, row.names = FALSE)
-cat("\nData used in the model:\n"); print(df, row.names = FALSE)
+cat("\n===== Shift adjustment =====\n"); print(shiftA, row.names = FALSE)
 n <- nrow(df)
-# Optional: save the positive dataset
-# write.csv(df, "C:/Users/ASUS/Research/Model_final_positive.csv", row.names = FALSE)
 
 
-## ---- STEP 2: Table 0 - Okun's Law benchmark -------------------------------
-# dUNEMP_t = alpha + beta * GDPGROWTH_t + e_t   (HAC SEs, 2 lags)
-okun_df <- na.omit(data.frame(dUNEMP = dif(df$UNEMP), GDPGROWTH = df$GDPGROWTH))
-okun_model <- lm(dUNEMP ~ GDPGROWTH, data = okun_df)
-cat("\n===== Table 0: Okun's Law benchmark (HAC SEs) =====\n")
-okun_tab <- coef_table(okun_model, newey_west(okun_model, 2))
-okun_tab$p <- round(2 * pnorm(-abs(okun_tab$t)), 4)          # z-test p-values, as in the report
-okun_tab$Sig <- stars(okun_tab$p)
-print(okun_tab)
-cat("R2 =", round(summary(okun_model)$r.squared, 4), "| n =", nrow(okun_df), "\n")
+## ---- STEP 3: Table 3 - Descriptive statistics (original data) --------------
+desc <- do.call(rbind, lapply(c(vars5, if (has_gdppc) "GDPPC"), function(v) {
+  x <- df_original[[v]]; m <- mean(x); s2 <- mean((x - m)^2)
+  sk <- mean((x - m)^3) / s2^1.5; ku <- mean((x - m)^4) / s2^2; jb <- length(x) / 6 * (sk^2 + (ku - 3)^2 / 4)
+  data.frame(Variable = v, Mean = round(m, 3), SD = round(sd(x), 3), Min = round(min(x), 3), Max = round(max(x), 3),
+             Skewness = round(sk, 3), Kurtosis = round(ku, 3), JB = round(jb, 3), JB_p = round(pchisq(jb, 2, lower.tail = FALSE), 3))
+}))
+cat("\n===== Table 3: Descriptive statistics =====\n"); print(desc, row.names = FALSE)
 
 
-## ---- STEP 3: Table 1 - Correlation matrix (+ Fig. 5) ----------------------
-cor_matrix <- round(cor(df[, vars5]), 3)
-cat("\n===== Table 1: Correlation matrix =====\n"); print(cor_matrix)
-heatmap(cor_matrix, Rowv = NA, Colv = NA, symm = TRUE, margins = c(8, 8),
-        col = colorRampPalette(c("#2E75B6", "white", "#C00000"))(50), main = "Fig. 5  Correlation matrix")
+## ---- STEP 4: Table 4 - Correlation matrix and VIF --------------------------
+cat("\n===== Table 4: Correlation matrix =====\n"); print(round(cor(df[, vars5]), 3))
+xv <- vars5[-1]
+vif <- sapply(xv, function(v) 1 / (1 - summary(lm(reformulate(setdiff(xv, v), v), data = df))$r.squared))
+cat("VIF:\n"); print(round(vif, 3))
 
 
-## ---- STEP 4: Table 2 - Unit root tests ------------------------------------
-table2 <- do.call(rbind, lapply(vars5, function(v) {
-  a <- adf_test(df[[v]]); ad <- adf_test(diff(df[[v]])); p <- pp_test(df[[v]]); k <- kpss_test(df[[v]])
-  data.frame(Variable = v,
-    ADF = round(a[["stat"]], 4), ADF_p = round(a[["p"]], 4),
-    PP = round(p[["stat"]], 4), PP_p = round(p[["p"]], 4),
-    KPSS = round(k[["stat"]], 4), KPSS_p = round(k[["p"]], 3),
-    ADF_diff_p = round(ad[["p"]], 4),
+## ---- STEP 5: Table 5 - Unit root tests -------------------------------------
+table5 <- do.call(rbind, lapply(vars5, function(v) {
+  a <- adf_test(df[[v]]); ad <- adf_test(diff(df[[v]])); p <- pp_test(df[[v]]); pd <- pp_test(diff(df[[v]]))
+  k <- kpss_test(df[[v]]); kd <- kpss_test(diff(df[[v]]))
+  data.frame(Variable = v, ADF = round(a[["stat"]], 3), ADF_p = round(a[["p"]], 3),
+    ADF_d = round(ad[["stat"]], 3), ADF_d_p = round(ad[["p"]], 3), PP = round(p[["stat"]], 3), PP_p = round(p[["p"]], 3),
+    PP_d = round(pd[["stat"]], 3), KPSS = round(k[["stat"]], 3), KPSS_p = round(k[["p"]], 3), KPSS_d = round(kd[["stat"]], 3),
     Order = if (a[["p"]] < 0.10) "I(0)" else if (ad[["p"]] < 0.10) "I(1)" else "I(2)+")
 }))
-cat("\n===== Table 2: Unit root tests (intercept) =====\n"); print(table2, row.names = FALSE)
-cat("ADF/PP: H0 = unit root. KPSS: H0 = stationary (p bounded to 0.01-0.10).\n")
+cat("\n===== Table 5: Unit root tests (intercept) =====\n"); print(table5, row.names = FALSE)
+cat("Small differences from the report can occur in the PP/KPSS lag choice; the order of integration is the same.\n")
 
 
-## ---- STEP 5: Table 3 - VAR lag order selection ----------------------------
-table3 <- var_lag_table(df[, vars5], maxlag = 4)
-cat("\n===== Table 3: VAR lag order selection (common sample T =", attr(table3, "T"), ") =====\n")
-print(table3, row.names = FALSE)
-cat("Selected lag: AIC", table3$Lag[which.min(table3$AIC)], "| SIC", table3$Lag[which.min(table3$SIC)],
-    "| HQ", table3$Lag[which.min(table3$HQ)], "| FPE", table3$Lag[which.min(table3$FPE)], "\n")
+## ---- STEP 5b: Table 6 - Zivot-Andrews unit root test with a structural break -
+yrs <- df_original$year   # break dates are reported as calendar years
+za_crit <- c(`1%` = -5.28, `5%` = -4.81, `10%` = -4.57)
+za_star <- function(s) if (s < za_crit[1]) "***" else if (s < za_crit[2]) "**" else if (s < za_crit[3]) "*" else ""
+table6 <- do.call(rbind, lapply(vars5, function(v) {
+  a <- za_test(df[[v]], yrs); b <- za_test(diff(df[[v]]), yrs[-1])
+  data.frame(Variable = v, ZA_level = paste0(round(a[["stat"]], 3), za_star(a[["stat"]])), Break_level = a[["break_year"]],
+    ZA_diff = paste0(round(b[["stat"]], 3), za_star(b[["stat"]])), Break_diff = b[["break_year"]])
+}))
+cat("\n===== Table 6: Zivot-Andrews test (break in intercept) =====\n"); print(table6, row.names = FALSE)
+cat("Critical values: 1% -5.28, 5% -4.81, 10% -4.57. No series is I(2), so the bounds test is valid.\n")
+
+## ---- STEP 6: Table 7 - Okun's law benchmark --------------------------------
+okun_row <- function(gvar) {
+  od <- na.omit(data.frame(dU = dif(df_original$UNEMP), g = df_original[[gvar]]))     # original data
+  m <- lm(dU ~ g, data = od); V <- newey_west(m, 2); b <- coef(m); se <- sqrt(V["g", "g"]); z <- b[["g"]] / se
+  data.frame(Growth = gvar, Alpha = round(b[[1]], 4), Okun_beta = round(b[["g"]], 4), SE_HAC = round(se, 4),
+             p = round(2 * pnorm(-abs(z)), 4), R2 = round(summary(m)$r.squared, 4), Threshold = round(-b[[1]] / b[["g"]], 2))
+}
+cat("\n===== Table 7: Okun's law benchmark (HAC SEs, 2 lags) =====\n")
+print(rbind(okun_row("GDPGROWTH"), if (has_gdppc) okun_row("GDPPC")), row.names = FALSE)
 
 
-## ---- STEP 6: UECM for ARDL(1,1,1,2,2) -------------------------------------
-# dUNEMP_t = c + l1*UNEMP_t-1 + l2*GDP_t-1 + l3*HDI_t-1 + l4*CPI_t-1 + l5*FDI_t-1
-#            + dGDP_t + dHDI_t + dCPI_t + dCPI_t-1 + dFDI_t + dFDI_t-1 + e_t
-uecm_df <- na.omit(data.frame(
-  d_UNEMP = dif(df$UNEMP),
-  L1_UNEMP = lag1(df$UNEMP), L1_GDPGROWTH = lag1(df$GDPGROWTH), L1_HDI = lag1(df$HDI),
-  L1_CPI = lag1(df$CPI), L1_FDI = lag1(df$FDI),
-  d_GDPGROWTH = dif(df$GDPGROWTH), d_HDI = dif(df$HDI),
-  d_CPI = dif(df$CPI), L1_d_CPI = lag1(dif(df$CPI)),
-  d_FDI = dif(df$FDI), L1_d_FDI = lag1(dif(df$FDI))))
-uecm_model <- lm(d_UNEMP ~ L1_UNEMP + L1_GDPGROWTH + L1_HDI + L1_CPI + L1_FDI +
-                   d_GDPGROWTH + d_HDI + d_CPI + L1_d_CPI + d_FDI + L1_d_FDI, data = uecm_df)
+## ---- STEP 7: Lag selection by AIC (Appendix C) -----------------------------
+# All ARDL(p, q1..q4) with p = 1..2 and q = 0..2, fitted on the same sample (1996-2024).
+build_ardl <- function(d, p, q, gname = "GDPGROWTH") {
+  X <- data.frame(y = d$UNEMP)
+  for (j in 1:p) X[[paste0("UNEMP_L", j)]] <- c(rep(NA, j), head(d$UNEMP, -j))
+  for (v in names(q)) for (j in 0:q[[v]]) X[[paste0(v, "_L", j)]] <- if (j == 0) d[[if (v == "GROWTH") gname else v]] else c(rep(NA, j), head(d[[if (v == "GROWTH") gname else v]], -j))
+  X
+}
+grid <- expand.grid(p = 1:2, g = 0:2, h = 0:2, c = 0:2, f = 0:2)
+grid$AIC <- apply(grid, 1, function(r) {
+  X <- build_ardl(df, r[["p"]], c(GROWTH = r[["g"]], HDI = r[["h"]], CPI = r[["c"]], FDI = r[["f"]]))[3:n, ]
+  m <- lm(y ~ ., data = X); k <- length(coef(m)) + 1; nn <- nrow(X)
+  -2 * as.numeric(logLik(m)) + 2 * (k - 1)       # same ranking as statsmodels ARDL AIC
+})
+grid <- grid[order(grid$AIC), ]
+cat("\n===== Lag selection (five lowest AIC) =====\n"); print(head(grid, 5), row.names = FALSE)
+cat("Selected: ARDL(", paste(unlist(grid[1, 1:5]), collapse = ","), ")  -> the report uses ARDL(2,1,0,2,0)\n")
+
+
+## ---- STEP 8: UECM for ARDL(2,1,0,2,0) --------------------------------------
+# dUNEMP_t = c + l1*UNEMP_t-1 + l2*GDP_t-1 + l3*HDI_t + l4*CPI_t-1 + l5*FDI_t
+#            + dUNEMP_t-1 + dGDP_t + dCPI_t + dCPI_t-1 + e_t
+# (HDI and FDI have zero lags, so they enter at time t; this is an exact
+#  re-parameterisation of the ARDL model.)
+make_uecm <- function(d, gvar = "GDPGROWTH") na.omit(data.frame(
+  d_UNEMP = dif(d$UNEMP), L1_UNEMP = lag1(d$UNEMP), L1_G = lag1(d[[gvar]]), HDI = d$HDI,
+  L1_CPI = lag1(d$CPI), FDI = d$FDI, L1_d_UNEMP = lag1(dif(d$UNEMP)), d_G = dif(d[[gvar]]),
+  d_CPI = dif(d$CPI), L1_d_CPI = lag1(dif(d$CPI))))
+uecm_df <- make_uecm(df)
+uecm_model <- lm(d_UNEMP ~ L1_UNEMP + L1_G + HDI + L1_CPI + FDI + L1_d_UNEMP + d_G + d_CPI + L1_d_CPI, data = uecm_df)
 nw_vcov <- newey_west(uecm_model, lag = 2)
-cat("\nUECM: n =", nrow(uecm_df), "observations, residual df =", df.residual(uecm_model), "\n")
+cat("\nUECM: n =", nrow(uecm_df), "| residual df =", df.residual(uecm_model), "\n")
 
 
-## ---- STEP 7: Table 4 - ARDL bounds test -----------------------------------
-# H0: the five lagged-level coefficients are all zero (no long-run relationship)
-restricted <- lm(d_UNEMP ~ d_GDPGROWTH + d_HDI + d_CPI + L1_d_CPI + d_FDI + L1_d_FDI, data = uecm_df)
-bounds <- anova(restricted, uecm_model)
-F_bounds <- bounds$F[2]
-pss <- data.frame(Level = c("10%", "5%", "1%"), I0 = c(2.72, 3.23, 4.29), I1 = c(3.77, 4.35, 5.61))
-cat("\n===== Table 4: ARDL bounds test (Pesaran-Shin-Smith 2001, Case III, k = 4) =====\n")
-cat("F-statistic =", round(F_bounds, 4), "\n"); print(pss, row.names = FALSE)
-cat(if (F_bounds > 5.61) "F > 1% upper bound -> cointegration confirmed at 1%.\n" else
-    if (F_bounds > 4.35) "F > 5% upper bound -> cointegration confirmed at 5%.\n" else "Inconclusive / no cointegration.\n")
-
-# Cross-check with the ARDL package (same F; its p-values are an extra)
-ardl_model <- ardl(UNEMP ~ GDPGROWTH + HDI + CPI + FDI, data = df, order = c(1, 1, 1, 2, 2))
+## ---- STEP 9: Table 8 - ARDL bounds test ------------------------------------
+restricted <- lm(d_UNEMP ~ L1_d_UNEMP + d_G + d_CPI + L1_d_CPI, data = uecm_df)
+F_bounds <- anova(restricted, uecm_model)$F[2]
+pss <- data.frame(Level = c("10%", "5%", "1%"), I0 = c(2.45, 2.86, 3.74), I1 = c(3.52, 4.01, 5.06))
+cat("\n===== Table 8: ARDL bounds test (Pesaran et al. 2001, Case III, k = 4) =====\n")
+cat("F-statistic =", round(F_bounds, 3), "\n"); print(pss, row.names = FALSE)
+cat(if (F_bounds > 5.06) "F > 1% upper bound -> cointegration confirmed at 1%.\n" else "Check the bounds.\n")
+ardl_model <- ardl(UNEMP ~ GDPGROWTH + HDI + CPI + FDI, data = df, order = c(2, 1, 0, 2, 0))   # cross-check
 print(bounds_f_test(ardl_model, case = 3))
 
 
-## ---- STEP 8: Table 5 - Johansen cointegration test ------------------------
-joh <- johansen_test(df[, vars5], k_ar_diff = 1)
-table5 <- data.frame(
-  Hypothesis = c("r = 0", "r <= 1", "r <= 2", "r <= 3", "r <= 4"),
-  Trace = round(joh$trace, 3), Trace_CV5 = c(69.819, 47.854, 29.796, 15.494, 3.842),
-  MaxEigen = round(joh$maxeig, 3), MaxEig_CV5 = c(33.878, 27.586, 21.131, 14.264, 3.842))
-table5$Trace_sig <- ifelse(table5$Trace > c(77.820, 54.682, 35.463, 19.935, 6.635), "***",
-  ifelse(table5$Trace > table5$Trace_CV5, "**", ifelse(table5$Trace > c(65.820, 44.493, 27.067, 13.429, 2.706), "*", "")))
-cat("\n===== Table 5: Johansen test (k_ar_diff = 1, unrestricted constant, T =", joh$T, ") =====\n")
-print(table5, row.names = FALSE)
-cat("Critical values: MacKinnon-Haug-Michelis (1999), as in the report.\n")
-
-
-## ---- STEP 9: Table 6 - Long-run and short-run estimates (HAC) -------------
-b <- coef(uecm_model); dfr <- df.residual(uecm_model)
-
-# Long run: beta_X = -coef(L1_X) / coef(L1_UNEMP);  constant = -coef(Intercept) / coef(L1_UNEMP)
-lr_map <- c(GDPGROWTH = "L1_GDPGROWTH", HDI = "L1_HDI", CPI = "L1_CPI", FDI = "L1_FDI", C = "(Intercept)")
-long_run <- do.call(rbind, lapply(names(lr_map), function(v) {
-  num <- lr_map[[v]]; den <- "L1_UNEMP"
-  est <- -b[[num]] / b[[den]]
-  g <- setNames(rep(0, length(b)), names(b)); g[num] <- -1 / b[[den]]; g[den] <- b[[num]] / b[[den]]^2
-  se <- sqrt(as.numeric(t(g) %*% nw_vcov %*% g)); tt <- est / se
-  p <- 2 * pt(abs(tt), dfr, lower.tail = FALSE)
-  data.frame(Variable = v, Coef = round(est, 4), SE = round(se, 4), t = round(tt, 4), p = round(p, 4), Sig = stars(p))
-}))
+## ---- STEP 10: Tables 9-10 - Long-run and short-run estimates (HAC) ----------
+lr_table <- function(model, V, map) {
+  b <- coef(model); dfr <- df.residual(model)
+  do.call(rbind, lapply(names(map), function(v) {
+    num <- map[[v]]; den <- "L1_UNEMP"; est <- -b[[num]] / b[[den]]
+    g <- setNames(rep(0, length(b)), names(b)); g[num] <- -1 / b[[den]]; g[den] <- b[[num]] / b[[den]]^2
+    se <- sqrt(as.numeric(t(g) %*% V %*% g)); tt <- est / se; p <- 2 * pt(abs(tt), dfr, lower.tail = FALSE)
+    data.frame(Variable = v, Coef = round(est, 4), SE = round(se, 4), t = round(tt, 3), p = round(p, 4), Sig = stars(p))
+  }))
+}
+lr_map <- c(GDPGROWTH = "L1_G", HDI = "HDI", CPI = "L1_CPI", FDI = "FDI", C = "(Intercept)")
+long_run <- lr_table(uecm_model, nw_vcov, lr_map)
+cat("\n===== Table 9: Long-run coefficients (HAC SEs) =====\n"); print(long_run, row.names = FALSE)
+# Standardized beta = coefficient x SD(X) / SD(UNEMP), SDs from the original data (Table 3)
+sd_y <- sd(df_original$UNEMP)
+long_run$Std_beta <- c(round(long_run$Coef[1:4] * sapply(c("GDPGROWTH", "HDI", "CPI", "FDI"), function(v) sd(df_original[[v]])) / sd_y, 3), NA)
+long_run$Effect_1SD_pp <- c(round(long_run$Coef[1:4] * sapply(c("GDPGROWTH", "HDI", "CPI", "FDI"), function(v) sd(df_original[[v]])), 3), NA)
+cat("Standardized coefficients (ranking of effect size):\n"); print(long_run[1:4, c("Variable", "Std_beta", "Effect_1SD_pp")], row.names = FALSE)
 
 sr_all <- coef_table(uecm_model, nw_vcov)
-sr_map <- c(d_GDPGROWTH = "D(GDPGROWTH)", d_HDI = "D(HDI)", d_CPI = "D(CPI)", L1_d_CPI = "D(CPI(-1))",
-            d_FDI = "D(FDI)", L1_d_FDI = "D(FDI(-1))", L1_UNEMP = "CointEq(-1)")
+sr_map <- c(L1_d_UNEMP = "D(UNEMP(-1))", d_G = "D(GDPGROWTH)", HDI = "D(HDI)", d_CPI = "D(CPI)",
+            L1_d_CPI = "D(CPI(-1))", FDI = "D(FDI)", L1_UNEMP = "ECT(-1)")
 short_run <- cbind(Variable = unname(sr_map), sr_all[names(sr_map), ])
-
-cat("\n===== Table 6: Long-run estimations (HAC SEs) =====\n");  print(long_run, row.names = FALSE)
-cat("\n===== Table 6: Short-run estimations (HAC SEs) =====\n"); print(short_run, row.names = FALSE)
-cat("p-values use residual df =", dfr, "(report: df = 18), so some p differ in the 3rd decimal; stars are the same.\n")
-
-ect <- b[["L1_UNEMP"]]
-cat("Speed of adjustment:", round(-100 * ect, 1), "% per year | half-life =", round(log(0.5) / log(1 + ect), 2), "years\n")
-
-# Cross-check with the ARDL package (coefficients only; it uses non-robust SEs)
-cat("\nARDL package long-run multipliers (should match the Coef column above):\n")
-print(multipliers(ardl_model, type = "lr"))
+cat("\n===== Table 10: Short-run coefficients and ECT (HAC SEs) =====\n"); print(short_run, row.names = FALSE)
+cat("Note: for HDI and FDI (zero lags) the short-run impact equals the coefficient on HDI_t and FDI_t.\n")
+ect <- coef(uecm_model)[["L1_UNEMP"]]
+cat("Speed of adjustment:", round(-100 * ect, 1), "% per year\n")
+print(multipliers(ardl_model, type = "lr"))                       # cross-check (coefficients only)
 
 
-## ---- STEP 10: Diagnostics (bottom of Table 6) -----------------------------
-u <- residuals(uecm_model)
-lb <- Box.test(u, lag = 2, type = "Ljung-Box")
-arch_lm <- function(e, lags) {
-  e2 <- e^2; m <- length(e2)
-  Z <- sapply(1:lags, function(i) e2[(lags + 1 - i):(m - i)])
-  LM <- (m - lags) * summary(lm(e2[(lags + 1):m] ~ Z))$r.squared
-  pchisq(LM, lags, lower.tail = FALSE)
-}
-arch_p <- sapply(1:5, function(L) arch_lm(u, L))
-sk <- mean((u - mean(u))^3) / mean((u - mean(u))^2)^1.5
-ku <- mean((u - mean(u))^4) / mean((u - mean(u))^2)^2
-jb <- length(u) / 6 * (sk^2 + (ku - 3)^2 / 4)
-yl <- df$UNEMP[(n - nrow(uecm_df) + 1):n]                      # UNEMP in levels, same sample
-R2 <- 1 - sum(u^2) / sum((yl - mean(yl))^2)
-k_par <- length(b)
+## ---- STEP 11: Table 11 - Diagnostic tests ----------------------------------
+u <- residuals(uecm_model); nU <- length(u)
+# Levels form of the same ARDL(2,1,0,2,0) (identical residuals) for BG and RESET
+lev <- data.frame(y = df$UNEMP, U1 = lag1(df$UNEMP), U2 = c(NA, NA, head(df$UNEMP, -2)), G0 = df$GDPGROWTH, G1 = lag1(df$GDPGROWTH),
+                  H0 = df$HDI, C0 = df$CPI, C1 = lag1(df$CPI), C2 = c(NA, NA, head(df$CPI, -2)), F0 = df$FDI)
+lev <- na.omit(lev); lev_m <- lm(y ~ ., data = lev); Xl <- model.matrix(lev_m); e <- residuals(lev_m)
+e1 <- c(0, head(e, -1)); e2 <- c(0, 0, head(e, -2))                       # zero-padded lags (as in statsmodels)
+bg_F <- anova(lm(e ~ Xl - 1), lm(e ~ Xl - 1 + e1 + e2))
+bp_LM <- nU * summary(lm(u^2 ~ Xl[, -1]))$r.squared
+arch_lm <- function(e, lags) { e2 <- e^2; m <- length(e2); Z <- sapply(1:lags, function(i) e2[(lags + 1 - i):(m - i)])
+  LM <- (m - lags) * summary(lm(e2[(lags + 1):m] ~ Z))$r.squared; c(LM, pchisq(LM, lags, lower.tail = FALSE)) }
+sk <- mean((u - mean(u))^3) / mean((u - mean(u))^2)^1.5; ku <- mean((u - mean(u))^4) / mean((u - mean(u))^2)^2
+jb <- nU / 6 * (sk^2 + (ku - 3)^2 / 4)
+lev$yhat2 <- fitted(lev_m)^2; reset <- anova(lev_m, lm(y ~ ., data = lev))
+kp <- length(coef(uecm_model))
+yl <- df$UNEMP[(n - nU + 1):n]; R2 <- 1 - sum(u^2) / sum((yl - mean(yl))^2)
 diag_tab <- data.frame(
-  Test = c("Ljung-Box Q (lag 2)", "ARCH-LM (lags 1-5, min p)", "Jarque-Bera", "R-squared (levels)",
-           paste0("Adj. R-squared (n=", length(u), ", k=", k_par, ")")),
-  Statistic = round(c(lb$statistic, NA, jb, R2, 1 - (1 - R2) * (length(u) - 1) / (length(u) - k_par)), 4),
-  p = round(c(lb$p.value, min(arch_p), pchisq(jb, 2, lower.tail = FALSE), NA, NA), 4))
-cat("\n===== Table 6: Diagnostic tests =====\n"); print(diag_tab, row.names = FALSE)
-cat("ARCH-LM p < 0.05 -> heteroskedasticity, which is why HAC standard errors are used.\n")
+  Test = c("R2 (levels)", "Adj. R2", "Breusch-Godfrey F (2 lags)", "Breusch-Pagan LM", "ARCH LM (1 lag)", "Jarque-Bera", "Ramsey RESET F"),
+  Statistic = round(c(R2, 1 - (1 - R2) * (nU - 1) / (nU - kp), bg_F$F[2], bp_LM, arch_lm(u, 1)[1], jb, reset$F[2]), 3),
+  p = round(c(NA, NA, bg_F$`Pr(>F)`[2], pchisq(bp_LM, kp - 1, lower.tail = FALSE), arch_lm(u, 1)[2], pchisq(jb, 2, lower.tail = FALSE), reset$`Pr(>F)`[2]), 3))
+cat("\n===== Table 11: Diagnostic tests =====\n"); print(diag_tab, row.names = FALSE)
+cat("BG and RESET use the levels form of the same model (identical residuals).\n")
 
 
-## ---- STEP 11: Table 7 - VECM Granger causality + ECT ----------------------
-gr <- vecm_granger_matrix(df[, vars5], k_ar_diff = 1)
-table7 <- matrix(sprintf("%.4f%s (%.4f)", gr$F, stars(gr$p), gr$p), 5, 5, dimnames = dimnames(gr$F))
-diag(table7) <- "-"
-ect_tab <- vecm_ect(df[, vars5], joh$beta)
-cat("\n===== Table 7: VECM Granger causality, F (p) | rows = caused, columns = causing =====\n")
-print(noquote(table7))
-cat("F-test df =", gr$df[1], ",", gr$df[2], "\n")
-cat("\n===== Table 7: ECT(-1) loading for each equation =====\n"); print(ect_tab, row.names = FALSE)
-cat("Cointegrating vector (normalised on UNEMP):\n"); print(round(joh$beta, 4))
-
-
-## ---- STEP 12: Figs 2-3 - CUSUM and CUSUM of squares -----------------------
+## ---- STEP 12: Figures 3-4 - CUSUM and CUSUM of squares ---------------------
 f_uecm <- formula(uecm_model)
-cusum <- efp(f_uecm, data = uecm_df, type = "Rec-CUSUM")
-print(sctest(cusum))                                 # p > 0.05 -> stable
-plot(cusum, main = "Fig. 2  Plot of CUSUM")
-
-rr <- recresid(f_uecm, data = uecm_df)
-cs <- cumsum(rr^2) / sum(rr^2); m <- length(rr); expct <- seq_len(m) / m
-c0 <- 1.358 / (sqrt(m) + 0.12 + 0.11 / sqrt(m))        # approx. 5% bound
-plot(cs, type = "l", lwd = 2, col = "steelblue", ylim = c(-0.4, 1.4),
-     main = "Fig. 3  Plot of CUSUM of squares", xlab = "Recursive residual", ylab = "CUSUMSQ")
+cusum <- efp(f_uecm, data = uecm_df, type = "Rec-CUSUM"); print(sctest(cusum)); plot(cusum, main = "Figure 3  CUSUM")
+rr <- recresid(f_uecm, data = uecm_df); cs <- cumsum(rr^2) / sum(rr^2); m <- length(rr); expct <- seq_len(m) / m
+c0 <- 1.358 / (sqrt(m) + 0.12 + 0.11 / sqrt(m))
+plot(cs, type = "l", lwd = 2, col = "steelblue", ylim = c(-0.4, 1.4), main = "Figure 4  CUSUM of squares", xlab = "Recursive residual", ylab = "CUSUMSQ")
 lines(expct - c0, col = "red", lty = 2); lines(expct + c0, col = "red", lty = 2)
-legend("topleft", c("CUSUMSQ", "5% bounds"), col = c("steelblue", "red"), lty = c(1, 2), bty = "n")
-cat("CUSUMSQ max deviation =", round(max(abs(cs - expct)), 4), "vs 5% bound", round(c0, 4),
-    if (max(abs(cs - expct)) < c0) "-> stable\n" else "-> outside bounds\n")
+cat("CUSUMSQ max deviation =", round(max(abs(cs - expct)), 4), "vs approx. 5% bound", round(c0, 4), "\n")
 
 
-## ---- STEP 13: Fig. 4 - Long-run effects chart -----------------------------
-lr4 <- long_run[long_run$Variable != "C", ]
-bp <- barplot(lr4$Coef, names.arg = lr4$Variable, col = ifelse(lr4$Coef > 0, "#2E7D32", "#C62828"),
-              border = NA, ylim = c(min(lr4$Coef) * 1.3, max(lr4$Coef) * 2),
-              main = "Fig. 4  Long-run effects on the unemployment rate", ylab = "Long-run coefficient")
-abline(h = 0)
-text(bp, lr4$Coef, paste0(sprintf("%+.3f", lr4$Coef), lr4$Sig), pos = ifelse(lr4$Coef > 0, 3, 1), cex = 0.9)
-legend("bottomright", c("lowers unemployment", "raises unemployment"), fill = c("#C62828", "#2E7D32"),
-       border = NA, bty = "n")
+## ---- STEP 13: Table 12 - Johansen cointegration test -----------------------
+joh <- johansen_test(df[, vars5], k_ar_diff = 1)
+table11 <- data.frame(Hypothesis = c("r = 0", "r <= 1", "r <= 2", "r <= 3", "r <= 4"),
+  Trace = round(joh$trace, 3), Trace_CV5 = c(69.819, 47.854, 29.796, 15.494, 3.842),
+  MaxEigen = round(joh$maxeig, 3), MaxEig_CV5 = c(33.878, 27.586, 21.131, 14.264, 3.842))
+cat("\n===== Table 12: Johansen test =====\n"); print(table11, row.names = FALSE)
 
 
-## ---- STEP 14: Robustness - GDP per capita growth instead of real GDP growth ---
-# Table 0a: Okun benchmark with each growth measure.
-# Table 6a: ARDL(1,1,1,2,2) long-run estimates with GDPPC in place of GDPGROWTH.
-if (TRUE) {
-  okun_row <- function(gvar) {
-    od <- na.omit(data.frame(dU = dif(df_original$UNEMP), g = df_original[[gvar]]))   # original scale
-    m <- lm(dU ~ g, data = od); V <- newey_west(m, 2)
-    b <- coef(m)[["g"]]; se <- sqrt(V["g", "g"]); z <- b / se
-    data.frame(Growth_measure = gvar, Okun_beta = round(b, 4), SE_HAC = round(se, 4),
-               p = round(2 * pnorm(-abs(z)), 4), R2 = round(summary(m)$r.squared, 4),
-               Threshold_growth = round(-coef(m)[["(Intercept)"]] / b, 2))
-  }
-  cat("\n===== Table 0a: Okun benchmark - real GDP growth vs per capita growth =====\n")
-  print(rbind(okun_row("GDPGROWTH"), okun_row("GDPPC")), row.names = FALSE)
-  cat("Threshold growth = -alpha/beta on the original data: growth needed to keep unemployment constant.\n")
+## ---- STEP 14: Table 13 - VECM Granger causality ----------------------------
+gr <- vecm_granger_matrix(df[, vars5], k_ar_diff = 1)
+table12 <- matrix(sprintf("%.3f%s (%.3f)", gr$F, stars(gr$p), gr$p), 5, 5, dimnames = dimnames(gr$F)); diag(table12) <- "-"
+cat("\n===== Table 13: VECM Granger causality, F (p) | rows = caused, columns = causing =====\n"); print(noquote(table12))
+print(vecm_ect(df[, vars5], joh$beta), row.names = FALSE)
 
-  rob_df <- na.omit(data.frame(
-    d_UNEMP = dif(df$UNEMP),
-    L1_UNEMP = lag1(df$UNEMP), L1_G = lag1(df$GDPPC), L1_HDI = lag1(df$HDI),
-    L1_CPI = lag1(df$CPI), L1_FDI = lag1(df$FDI),
-    d_G = dif(df$GDPPC), d_HDI = dif(df$HDI),
-    d_CPI = dif(df$CPI), L1_d_CPI = lag1(dif(df$CPI)),
-    d_FDI = dif(df$FDI), L1_d_FDI = lag1(dif(df$FDI))))
-  rob_model <- lm(d_UNEMP ~ L1_UNEMP + L1_G + L1_HDI + L1_CPI + L1_FDI +
-                    d_G + d_HDI + d_CPI + L1_d_CPI + d_FDI + L1_d_FDI, data = rob_df)
-  rob_V <- newey_west(rob_model, 2); rb <- coef(rob_model); rdf <- df.residual(rob_model)
-  rob_restr <- lm(d_UNEMP ~ d_G + d_HDI + d_CPI + L1_d_CPI + d_FDI + L1_d_FDI, data = rob_df)
-  rob_F <- anova(rob_restr, rob_model)$F[2]
-  rob_map <- c(GDPPC = "L1_G", HDI = "L1_HDI", CPI = "L1_CPI", FDI = "L1_FDI", C = "(Intercept)")
-  rob_lr <- do.call(rbind, lapply(names(rob_map), function(v) {
-    num <- rob_map[[v]]; den <- "L1_UNEMP"; est <- -rb[[num]] / rb[[den]]
-    g <- setNames(rep(0, length(rb)), names(rb)); g[num] <- -1 / rb[[den]]; g[den] <- rb[[num]] / rb[[den]]^2
-    se <- sqrt(as.numeric(t(g) %*% rob_V %*% g)); tt <- est / se; p <- 2 * pt(abs(tt), rdf, lower.tail = FALSE)
-    data.frame(Variable = v, Coef = round(est, 4), SE = round(se, 4), t = round(tt, 4), p = round(p, 4), Sig = stars(p))
-  }))
-  cat("\n===== Table 6a: ARDL(1,1,1,2,2) with GDP per capita growth - long run (HAC) =====\n")
-  cat("Bounds F =", round(rob_F, 4), "(1% upper bound 5.61)\n")
-  print(rob_lr, row.names = FALSE)
-  cat("ECT =", round(rb[["L1_UNEMP"]], 4), "| short-run D(GDPPC) =", round(rb[["d_G"]], 4), "\n")
-  cat("Compare with Table 6: same signs and significance -> results do not depend on the growth measure.\n")
+
+## ---- STEP 15: Table 14 - Robustness checks ---------------------------------
+if (has_gdppc) {
+  rob_df <- make_uecm(df, "GDPPC")
+  rob_m <- lm(d_UNEMP ~ L1_UNEMP + L1_G + HDI + L1_CPI + FDI + L1_d_UNEMP + d_G + d_CPI + L1_d_CPI, data = rob_df)
+  rob_F <- anova(lm(d_UNEMP ~ L1_d_UNEMP + d_G + d_CPI + L1_d_CPI, data = rob_df), rob_m)$F[2]
+  cat("\n===== Table 14a: GDP per capita growth instead of real GDP growth =====\n")
+  cat("Bounds F =", round(rob_F, 3), "| ECT =", round(coef(rob_m)[["L1_UNEMP"]], 4), "\n")
+  print(lr_table(rob_m, newey_west(rob_m, 2), c(GDPPC = "L1_G", HDI = "HDI", CPI = "L1_CPI", FDI = "FDI")), row.names = FALSE)
 }
+old_df <- na.omit(data.frame(d_UNEMP = dif(df$UNEMP), L1_UNEMP = lag1(df$UNEMP), L1_G = lag1(df$GDPGROWTH), L1_HDI = lag1(df$HDI),
+  L1_CPI = lag1(df$CPI), L1_FDI = lag1(df$FDI), d_G = dif(df$GDPGROWTH), d_HDI = dif(df$HDI), d_CPI = dif(df$CPI),
+  L1_d_CPI = lag1(dif(df$CPI)), d_FDI = dif(df$FDI), L1_d_FDI = lag1(dif(df$FDI))))
+old_m <- lm(d_UNEMP ~ L1_UNEMP + L1_G + L1_HDI + L1_CPI + L1_FDI + d_G + d_HDI + d_CPI + L1_d_CPI + d_FDI + L1_d_FDI, data = old_df)
+old_F <- anova(lm(d_UNEMP ~ d_G + d_HDI + d_CPI + L1_d_CPI + d_FDI + L1_d_FDI, data = old_df), old_m)$F[2]
+cat("\n===== Table 14b: alternative lag structure ARDL(1,1,1,2,2) =====\n")
+cat("Bounds F =", round(old_F, 3), "| ECT =", round(coef(old_m)[["L1_UNEMP"]], 4), "\n")
+print(lr_table(old_m, newey_west(old_m, 2), c(GDPGROWTH = "L1_G", HDI = "L1_HDI", CPI = "L1_CPI", FDI = "L1_FDI")), row.names = FALSE)
 
-cat("\nDone. Compare each table with the same number in ARDL_Results_Academic_Report_RealGDP.docx.\n")
+# Sensitivity: exclude 2024, whose HDI value is an estimate (UNDP data end in 2023)
+sub_df <- make_uecm(df[df_original$year <= 2023, ], "GDPGROWTH")
+sub_m <- lm(d_UNEMP ~ L1_UNEMP + L1_G + HDI + L1_CPI + FDI + L1_d_UNEMP + d_G + d_CPI + L1_d_CPI, data = sub_df)
+sub_F <- anova(lm(d_UNEMP ~ L1_d_UNEMP + d_G + d_CPI + L1_d_CPI, data = sub_df), sub_m)$F[2]
+cat("\n===== Sensitivity: sample 1994-2023 (without the estimated 2024 HDI) =====\n")
+cat("N =", nobs(sub_m), "| Bounds F =", round(sub_F, 3), "| ECT =", round(coef(sub_m)[["L1_UNEMP"]], 4), "\n")
+print(lr_table(sub_m, newey_west(sub_m, 2), c(GDPGROWTH = "L1_G", HDI = "HDI", CPI = "L1_CPI", FDI = "FDI")), row.names = FALSE)
+
+cat("\nDone. Compare each table with the same table number in Final_Research_Report.docx.\n")

@@ -12,6 +12,8 @@ A panel of **5 countries** (Denmark, Finland, France, Germany, Greece) over **20
 
 Files: [`data/fdi_stock_panel.csv`](data/fdi_stock_panel.csv), [`data/fdi_flow_panel.csv`](data/fdi_flow_panel.csv)
 
+![Inward FDI stock by country, 2000–2023](images/fdi_stock_by_country.png)
+
 ## Method
 
 Two OLS regressions: one explaining the **stock** of FDI (total investment built up) and one explaining yearly **flows** (new investment). Full output: [`regression_results.txt`](regression_results.txt)

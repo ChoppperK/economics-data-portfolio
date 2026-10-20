@@ -27,6 +27,8 @@ Annual data for Thailand, 2005–2024 (20 observations): CPI inflation, GDP, pop
 | Baseline (GDP, population, GAN) | 2.82 | 2.32 |
 | **AR(1), lagged CPI** | **2.66** | **2.07** |
 
+![Actual vs forecast CPI inflation, 2019–2024](images/forecast_vs_actual.png)
+
 - The baseline model had **severe multicollinearity**: population (VIF ≈ 35.7) and GDP (VIF ≈ 19.3) move together, so no single predictor was significant.
 - The **AR(1) model forecast better**, and lagged CPI was the only significant predictor.
 - **Limitation:** the test period includes COVID-19 and the 2022 inflation spike, which no model trained on 2005–2018 could foresee. With only 20 observations, results should be read with caution. Adding global factors such as oil prices and exchange rates is the next step.

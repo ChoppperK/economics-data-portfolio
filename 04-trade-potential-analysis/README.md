@@ -20,6 +20,8 @@ Export, import, and GDP data for **10 economies** (Finland, France, Germany, Ice
 
 I combined them into a **Trade Performance Index** and ranked the economies each year. Workbook: [`trade_potential_analysis.xlsx`](trade_potential_analysis.xlsx)
 
+![Revealed comparative advantage, 2023](images/rca_2023.png)
+
 ## Results: Trade Performance Index ranking (1 = best)
 
 | Economy | 2019 | 2020 | 2021 | 2022 | 2023 |
