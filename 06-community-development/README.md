@@ -61,7 +61,7 @@ I joined as a camper in my first year of university and grew into a **senior cam
 
 ![Kru Doi camp – activities with students (students' faces blurred)](images/kru_doi_camp_students_blurred.jpg)
 ![Kru Doi camp team](images/kru_doi_camp_team.jpg)
-![Kru Doi kitchen team](images/kru_doi_kitchen_team.jpg)
+![Kru Doi kitchen team cooking lunch for students](images/kru_doi_kitchen_cooking.jpg)
 
 ## 4. Singha Asa (สิงห์อาสา)
 
@@ -73,7 +73,7 @@ With senior members of the Kru Doi club, I joined one-day volunteer trips to chi
 
 A youth training programme by the Chiang Rai Provincial Administrative Organization to develop children and young people across the province into capable youth leaders who can help drive Chiang Rai forward. The programme ran four 2-day-1-night camps in four districts.
 
-![Chiang Rai PAO youth camp](images/chiangrai_pao_youth_camp.jpg)
+![Chiang Rai PAO youth camp – staff team](images/chiangrai_pao_staff_team.jpg)
 
 ---
 
